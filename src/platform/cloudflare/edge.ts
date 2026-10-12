@@ -9,10 +9,14 @@ import {
   ChatUnavailable,
   ConnectionMissing,
   Outcome,
-  Receipt,
   SubmissionResult,
   SettingsResult,
   SettingsRejected,
+  WorkspaceState,
+  WorkspaceResult,
+  WorkspaceRejected,
+  SessionCreatedResult,
+  StopResult,
 } from "../../model.ts";
 import { Conversation } from "../../service.ts";
 import { authorize } from "./access.ts";
@@ -45,28 +49,75 @@ export default {
     }
     const assistant = env.ASSISTANT.getByName("personal");
     const conversation = Layer.succeed(Conversation, {
-      configure: (settings) =>
-        rpc("configure", async () => await assistant.configure(settings)).pipe(
+      configure: (settings, sessionId) =>
+        rpc("configure", async () => await assistant.configure(settings, sessionId)).pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(SettingsResult)),
           Effect.mapError(() => new ChatUnavailable({ operation: "configure" })),
           Effect.flatMap((result) =>
-            Schema.is(SettingsRejected)(result) ? Effect.fail(result) : Effect.succeed(result),
+            Effect.gen(function* () {
+              if (Schema.is(SettingsRejected)(result)) return yield* result;
+              if (Schema.is(WorkspaceRejected)(result)) return yield* result;
+              return result;
+            }),
           ),
         ),
-      read: rpc("read", () => assistant.read()).pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(ChatState)),
-        Effect.mapError(() => new ChatUnavailable({ operation: "read" })),
-      ),
-      submit: (input) =>
-        rpc("submit", async () => await assistant.submit(input)).pipe(
+      read: (sessionId) =>
+        rpc("read", () => assistant.read(sessionId)).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(ChatState)),
+          Effect.mapError(() => new ChatUnavailable({ operation: "read" })),
+        ),
+      submit: (input, sessionId) =>
+        rpc("submit", async () => await assistant.submit(input, sessionId)).pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(SubmissionResult)),
           Effect.mapError(() => new ChatUnavailable({ operation: "submit" })),
-          Effect.filterOrFail(Schema.is(Receipt), () => new ConnectionMissing()),
+          Effect.flatMap((result) =>
+            Effect.gen(function* () {
+              if (Schema.is(ConnectionMissing)(result)) return yield* new ConnectionMissing();
+              if (Schema.is(WorkspaceRejected)(result)) return yield* result;
+              return result;
+            }),
+          ),
         ),
-      result: (id) =>
-        rpc("result", () => assistant.result(id)).pipe(
+      result: (id, sessionId) =>
+        rpc("result", () => assistant.result(id, sessionId)).pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(Outcome)),
           Effect.mapError(() => new ChatUnavailable({ operation: "result" })),
+        ),
+      workspace: rpc("workspace", () => assistant.workspace()).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(WorkspaceState)),
+        Effect.mapError(() => new ChatUnavailable({ operation: "workspace" })),
+      ),
+      createSession: (input) =>
+        rpc("createSession", async () => await assistant.createSession(input)).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(SessionCreatedResult)),
+          Effect.mapError(() => new ChatUnavailable({ operation: "createSession" })),
+          Effect.flatMap((result) =>
+            Schema.is(WorkspaceRejected)(result) ? Effect.fail(result) : Effect.succeed(result),
+          ),
+        ),
+      updateSession: (id, input) =>
+        rpc("updateSession", async () => await assistant.updateSession(id, input)).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(WorkspaceResult)),
+          Effect.mapError(() => new ChatUnavailable({ operation: "updateSession" })),
+          Effect.flatMap((result) =>
+            Schema.is(WorkspaceRejected)(result) ? Effect.fail(result) : Effect.succeed(result),
+          ),
+        ),
+      saveMemory: (input) =>
+        rpc("saveMemory", async () => await assistant.saveMemory(input)).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(WorkspaceResult)),
+          Effect.mapError(() => new ChatUnavailable({ operation: "saveMemory" })),
+          Effect.flatMap((result) =>
+            Schema.is(WorkspaceRejected)(result) ? Effect.fail(result) : Effect.succeed(result),
+          ),
+        ),
+      stop: (id) =>
+        rpc("stop", async () => await assistant.stop(id)).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(StopResult)),
+          Effect.mapError(() => new ChatUnavailable({ operation: "stop" })),
+          Effect.flatMap((result) =>
+            Schema.is(WorkspaceRejected)(result) ? Effect.fail(result) : Effect.succeed(result),
+          ),
         ),
     });
     const { handler, dispose } = HttpRouter.toWebHandler(

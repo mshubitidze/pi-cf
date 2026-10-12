@@ -12,6 +12,10 @@ Mise pins Bun for package management, tasks, and application tests, plus Node fo
 - **Runtime tests:** Cloudflare's Vitest integration runs inside workerd. Vitest 5's host filesystem module cache is disabled in `vitest.runtime.config.ts` because its cache files are unavailable inside that runtime. Keep this documented option until the integration supports that cache.
 - **Development tools:** TypeScript 7 uses the official `@effect/tsgo` compiler patch and its installed configuration schema. The plugin configuration key remains `@effect/language-service`, as required by tsgo; the older package is not needed. shadcn is pinned locally so registry CLI and MCP use the same release. Foldkit dependency patches are version-specific; follow [their upgrade/removal criteria](../patches/README.md). Run the Effect compiler patch after compiler/toolchain upgrades.
 
+## Runtime Markdown
+
+`unified`, `remark-parse`, and `remark-gfm` parse untrusted assistant text at runtime. The small Foldkit renderer in `src/ui/markdown.ts` maps their typed AST to semantic elements without `innerHTML`. This adapter fills a demonstrated gap: the matched `@foldkit/markdown@0.14.3` package targets build-time Markdown modules, and its compiler rejects common runtime chat constructs such as references/task lists/raw HTML. Do not import its Vite compiler into the client. Replace the adapter when Foldkit provides a documented runtime API with equivalent untrusted-content behavior. Transcript rendering uses Foldkit's single-slot `createLazy` to avoid reparsing on draft edits without keeping an unbounded cache of private conversation text.
+
 ## Workflow integration
 
 The [version-matched XState Effect documentation](https://github.com/statelyai/xstate/blob/xstate%406.0.0-alpha.65/packages/xstate-effect/README.md) is authoritative for `setupEffect`, `fromEffect`, and `createEffectActor`. Ordinary XState `createActor` cannot host Effect actors. An application-scoped Effect Layer provides one actor to Foldkit resources; scope closure stops observation without undoing accepted remote work.

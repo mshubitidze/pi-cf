@@ -15,6 +15,16 @@ Open the URL Alchemy prints (normally http://localhost:1337). Login writes a pri
 
 Ask: “Use word_count to count: Cloudflare keeps Pi running.” Responses appear when a turn completes. Refresh resumes observation of accepted work; Retry preserves its operation ID after uncertain delivery.
 
+## Use the workspace
+
+- Use **New thread** for a separate conversation. The title picker searches threads and offers rename, archive, and restore. Archiving keeps the history.
+- **Workspace options** contains **Fork this thread**, **Export Markdown**, and **Shared memory**. A fork copies the current conversation into an independent thread.
+- Shared memory is a short, editable note used across threads for future model requests. Add preferences or context you want Pi to keep using. It is saved explicitly; Pi does not automatically extract memories. Conflicting edits preserve your draft for review.
+- Model and reasoning settings apply to the selected thread. **Stop** cancels its active work; switching threads or closing the browser lets accepted work continue.
+- Replies support Markdown and copying. Unsent drafts stay with their thread while the page is open. The selected thread survives reload through its URL; drafts do not survive reload.
+
+Your original conversation remains available as **Main conversation**. This workspace uses Pi's native conversations and documents inside the existing Durable Object.
+
 ```sh
 mise run check
 mise run build

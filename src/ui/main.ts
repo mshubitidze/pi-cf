@@ -1,3 +1,4 @@
+import * as Record from "effect/Record";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -8,10 +9,21 @@ import * as Option from "effect/Option";
 import { modifyFields } from "foldkit/struct";
 import * as Update from "foldkit/update";
 import * as Combobox from "./components/ui/combobox.ts";
+import * as Dialog from "./components/ui/dialog.ts";
+import {
+  LoadWorkspace,
+  ReadSelectedThread,
+  RememberSelectedThread,
+  SelectSession,
+  workspaceHandlers,
+} from "./workspace.ts";
+import { closeThreadPopover, closeWorkspacePopover, closeSettingsPopover } from "./overlays.ts";
 import * as Popover from "./components/ui/popover.ts";
-import { ModelSettings, OperationId, Submission } from "../model.ts";
+import { ModelSettings, OperationId, Submission, SessionId, ROOT_SESSION } from "../model.ts";
 import { Message } from "./message.ts";
 import {
+  canSelectSession,
+  canStop,
   canSubmit,
   canRefresh,
   canRetry,
@@ -34,6 +46,32 @@ export { view } from "./view.ts";
 export const init = () => ({
   model: Model.make({
     draft: "",
+    drafts: {},
+    workspace: { sessions: [], memory: { text: "", revision: 0 } },
+    workspaceActivity: "loading",
+    workspaceGeneration: 0,
+    maybeWorkspaceError: Option.none(),
+    maybeCreation: Option.none(),
+    threadPopover: Popover.init({ id: "threads", contentFocus: true, isAnimated: false }),
+    threadQuery: "",
+    threadFilter: "active",
+    memoryDialog: Dialog.init({
+      id: "shared-memory",
+      isAnimated: false,
+      focusSelector: "#shared-memory-text",
+    }),
+    memoryDraft: "",
+    memoryRevision: 0,
+    memorySaveState: "idle",
+    maybeMemoryError: Option.none(),
+    renameDialog: Dialog.init({
+      id: "rename-thread",
+      isAnimated: false,
+      focusSelector: "#thread-name",
+    }),
+    maybeRenameSession: Option.none(),
+    renameDraft: "",
+    maybeCopiedMessage: Option.none(),
     workflow: initialView,
     dispatch: Dispatch.Idle(),
     maybeFeedback: Option.none(),
@@ -41,13 +79,10 @@ export const init = () => ({
     settingsPopover: Popover.init({ id: "settings", contentFocus: true }),
     workspacePopover: Popover.init({ id: "workspace", contentFocus: true }),
   }),
+  commands: [LoadWorkspace({ generation: 0 }), ReadSelectedThread()],
 });
 // UPDATE
 
-const foldPopoverOutMessage = Popover.OutMessage.match<Update.Step<Model, Message>>({
-  Opened: () => (model) => ({ model }),
-  Closed: () => (model) => ({ model }),
-});
 const foldSettingsPopover = Update.foldChild({
   update: Popover.update,
   read: (model: Model) => Option.some(model.settingsPopover),
@@ -55,12 +90,19 @@ const foldSettingsPopover = Update.foldChild({
     modifyFields(model, { settingsPopover: () => nextSettingsPopover }),
   toParentMessage: (message) => Message.GotSettingsPopoverMessage({ message }),
   foldOutMessage: Popover.OutMessage.match<Update.Step<Model, Message>>({
-    Opened: () => (model) => ({
-      model: modifyFields(model, {
-        modelCombobox: (combobox) =>
-          modifyFields(combobox, { inputValue: () => selectedModelName(model.workflow.chat) }),
-      }),
-    }),
+    Opened: () => (model) =>
+      Update.combine(model, [
+        closeThreadPopover,
+        closeWorkspacePopover,
+        (stepModel) => ({
+          model: modifyFields(stepModel, {
+            modelCombobox: (combobox) =>
+              modifyFields(combobox, {
+                inputValue: () => selectedModelName(stepModel.workflow.chat),
+              }),
+          }),
+        }),
+      ]),
     Closed: () => (model) => ({
       model: modifyFields(model, {
         modelCombobox: () =>
@@ -75,7 +117,10 @@ const foldWorkspacePopover = Update.foldChild({
   write: (model, nextWorkspacePopover) =>
     modifyFields(model, { workspacePopover: () => nextWorkspacePopover }),
   toParentMessage: (message) => Message.GotWorkspacePopoverMessage({ message }),
-  foldOutMessage: foldPopoverOutMessage,
+  foldOutMessage: Popover.OutMessage.match<Update.Step<Model, Message>>({
+    Opened: () => (model) => Update.combine(model, [closeThreadPopover, closeSettingsPopover]),
+    Closed: () => (model) => ({ model }),
+  }),
 });
 
 const startRequest = (model: Model) =>
@@ -126,6 +171,10 @@ const foldModelCombobox = Update.foldChild({
 /** Serialize UI intentions until the matching actor acknowledgement is projected. */
 export const update = (model: Model, message: Message) =>
   Message.match<Update.Return<Model, Message, ChatWorkflow | Crypto.Crypto>>(message, {
+    ...workspaceHandlers(model),
+    ClickedStop: () =>
+      canStop(model) ? { model: startRequest(model), commands: [StopWorkflow()] } : { model },
+    CompletedStop: ({ requestId }) => ({ model: completeRequest(model, requestId) }),
     GotModelComboboxMessage: ({ message }) => foldModelCombobox(model, message),
     GotSettingsPopoverMessage: ({ message }) => foldSettingsPopover(model, message),
     GotWorkspacePopoverMessage: ({ message }) => foldWorkspacePopover(model, message),
@@ -158,15 +207,38 @@ export const update = (model: Model, message: Message) =>
         : { model },
     SubmittedPrompt: () =>
       canSubmit(model)
-        ? { model: startRequest(model), commands: [SubmitPrompt({ prompt: model.draft.trim() })] }
+        ? {
+            model: startRequest(model),
+            commands: [
+              SubmitPrompt({ prompt: model.draft.trim(), sessionId: model.workflow.sessionId }),
+            ],
+          }
         : { model },
     ClickedRefresh: () =>
-      canRefresh(model) ? { model: startRequest(model), commands: [RefreshWorkflow()] } : { model },
+      canRefresh(model)
+        ? Update.combine(model, [
+            closeWorkspacePopover,
+            (stepModel) => ({ model: startRequest(stepModel), commands: [RefreshWorkflow()] }),
+          ])
+        : { model },
     ClickedRetry: () =>
       canRetry(model) ? { model: startRequest(model), commands: [RetryWorkflow()] } : { model },
-    CompletedSubmitPrompt: ({ requestId }) => ({
-      model: modifyFields(completeRequest(model, requestId), { draft: () => "" }),
-    }),
+    CompletedSubmitPrompt: ({ requestId, sessionId }) =>
+      model.workflow.sessionId === sessionId
+        ? {
+            model: modifyFields(completeRequest(model, requestId), {
+              draft: () =>
+                model.workflow.phase === "submitRejected"
+                  ? model.draft ||
+                    Option.match(model.workflow.maybeSubmission, {
+                      onNone: () => "",
+                      onSome: (submission) => submission.prompt,
+                    })
+                  : "",
+              drafts: (drafts) => Record.set(drafts, sessionId, ""),
+            }),
+          }
+        : { model },
     CompletedRefreshWorkflow: ({ requestId }) => ({ model: completeRequest(model, requestId) }),
     CompletedRetryWorkflow: ({ requestId }) => ({ model: completeRequest(model, requestId) }),
     FailedSubmitPrompt: () => ({
@@ -181,19 +253,66 @@ export const update = (model: Model, message: Message) =>
         maybeFeedback: () => Option.some("Could not reconnect. Please try again."),
       }),
     }),
-    UpdatedWorkflow: ({ workflow }) => ({
-      model: modifyFields(model, {
-        workflow: () => workflow,
-        modelCombobox: (combobox) =>
-          combobox.isOpen
-            ? combobox
-            : modifyFields(combobox, { inputValue: () => selectedModelName(workflow.chat) }),
-        dispatch: (dispatch) =>
-          dispatch._tag === "AwaitingSnapshot" && hasAcknowledgement(workflow, dispatch.requestId)
-            ? Dispatch.Idle()
-            : dispatch,
-      }),
-    }),
+    UpdatedWorkflow: ({ workflow }) =>
+      workflow.sessionId === ROOT_SESSION &&
+      workflow.phase === "loading" &&
+      model.workflow.sessionId !== ROOT_SESSION &&
+      canSelectSession(model)
+        ? {
+            model: startRequest(model),
+            commands: [SelectSession({ sessionId: model.workflow.sessionId })],
+          }
+        : {
+            commands: [
+              ...(workflow.sessionId !== model.workflow.sessionId
+                ? [RememberSelectedThread({ sessionId: workflow.sessionId })]
+                : []),
+              ...(workflow.phase === "ready" &&
+              model.workflow.phase !== "ready" &&
+              model.workspaceActivity === "idle"
+                ? [LoadWorkspace({ generation: model.workspaceGeneration + 1 })]
+                : []),
+            ],
+            model: modifyFields(model, {
+              workspaceGeneration: (generation) =>
+                workflow.phase === "ready" &&
+                model.workflow.phase !== "ready" &&
+                model.workspaceActivity === "idle"
+                  ? generation + 1
+                  : generation,
+              workspaceActivity: (activity) =>
+                workflow.phase === "ready" &&
+                model.workflow.phase !== "ready" &&
+                activity === "idle"
+                  ? "loading"
+                  : activity,
+              workflow: () => workflow,
+              draft: (draft) =>
+                workflow.sessionId === model.workflow.sessionId
+                  ? workflow.phase === "submitRejected" && !draft
+                    ? Option.match(workflow.maybeSubmission, {
+                        onNone: () => draft,
+                        onSome: (submission) => submission.prompt,
+                      })
+                    : draft
+                  : (model.drafts[workflow.sessionId] ?? ""),
+              drafts: (drafts) =>
+                workflow.sessionId === model.workflow.sessionId
+                  ? drafts
+                  : Record.set(drafts, model.workflow.sessionId, model.draft),
+              maybeCopiedMessage: (copied) =>
+                workflow.chat.messages === model.workflow.chat.messages ? copied : Option.none(),
+              modelCombobox: (combobox) =>
+                combobox.isOpen
+                  ? combobox
+                  : modifyFields(combobox, { inputValue: () => selectedModelName(workflow.chat) }),
+              dispatch: (dispatch) =>
+                dispatch._tag === "AwaitingSnapshot" &&
+                hasAcknowledgement(workflow, dispatch.requestId)
+                  ? Dispatch.Idle()
+                  : dispatch,
+            }),
+          },
   });
 
 // COMMAND
@@ -213,9 +332,9 @@ const acknowledged = (id: OperationId) =>
   );
 
 export const SubmitPrompt = Command.define("SubmitPrompt", {
-  args: { prompt: Schema.String },
+  args: { prompt: Schema.String, sessionId: SessionId },
   messages: [Message.CompletedSubmitPrompt, Message.FailedSubmitPrompt],
-  execute: ({ prompt }) =>
+  execute: ({ prompt, sessionId }) =>
     Effect.gen(function* () {
       const id = yield* requestId;
       const actor = yield* ChatWorkflow;
@@ -224,7 +343,7 @@ export const SubmitPrompt = Command.define("SubmitPrompt", {
         submission: Submission.make({ operationId: id, prompt }),
       });
       yield* acknowledged(id);
-      return Message.CompletedSubmitPrompt({ requestId: id });
+      return Message.CompletedSubmitPrompt({ requestId: id, sessionId });
     }).pipe(Effect.orElseSucceed(() => Message.FailedSubmitPrompt())),
 });
 export const ConfigureSession = Command.define("ConfigureSession", {
@@ -257,6 +376,17 @@ export const RefreshWorkflow = Command.define("RefreshWorkflow", {
     yield* send(actor, { type: "REFRESH", requestId: id });
     yield* acknowledged(id);
     return Message.CompletedRefreshWorkflow({ requestId: id });
+  }).pipe(Effect.orElseSucceed(() => Message.FailedWorkflowRequest())),
+});
+
+export const StopWorkflow = Command.define("StopWorkflow", {
+  messages: [Message.CompletedStop, Message.FailedWorkflowRequest],
+  execute: Effect.gen(function* () {
+    const id = yield* requestId;
+    const actor = yield* ChatWorkflow;
+    yield* send(actor, { type: "STOP", requestId: id });
+    yield* acknowledged(id);
+    return Message.CompletedStop({ requestId: id });
   }).pipe(Effect.orElseSucceed(() => Message.FailedWorkflowRequest())),
 });
 

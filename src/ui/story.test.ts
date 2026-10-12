@@ -3,11 +3,12 @@ import { expect, test } from "bun:test";
 import { Command, given, message, model, story } from "foldkit/story";
 import { modifyFields } from "foldkit/struct";
 import { init, Message, RefreshWorkflow, SubmitPrompt, update } from "./main.ts";
-import { ChatState, OperationId } from "../model.ts";
+import { ChatState, OperationId, ROOT_SESSION } from "../model.ts";
 import { WorkflowView } from "./workflow.ts";
 
 test("submission disables duplicate clicks and preserves the draft when preparation fails", () => {
   const ready = WorkflowView.make({
+    sessionId: ROOT_SESSION,
     phase: "ready",
     maybeError: Option.none(),
     maybeSubmission: Option.none(),
@@ -29,7 +30,7 @@ test("submission disables duplicate clicks and preserves the draft when preparat
     message(Message.SubmittedPrompt()),
     model((value) => expect(value.dispatch._tag).toBe("Preparing")),
     model((value) => expect(update(value, Message.SubmittedPrompt()).model).toEqual(value)),
-    Command.expectExact(SubmitPrompt({ prompt: "Hello" })),
+    Command.expectExact(SubmitPrompt({ prompt: "Hello", sessionId: ROOT_SESSION })),
     Command.resolve(SubmitPrompt, Message.FailedSubmitPrompt()),
     model((value) => {
       expect(value.draft).toBe("Hello");
@@ -43,6 +44,7 @@ const readyModel = () =>
     init().model,
     Message.UpdatedWorkflow({
       workflow: WorkflowView.make({
+        sessionId: ROOT_SESSION,
         phase: "ready",
         chat: ChatState.make({
           messages: [],
@@ -79,7 +81,7 @@ test("acknowledgement and snapshot can arrive in either order without reopening 
       maybeAcknowledgedRequestId: Option.some(requestId),
     }),
   });
-  const completed = Message.CompletedSubmitPrompt({ requestId });
+  const completed = Message.CompletedSubmitPrompt({ requestId, sessionId: ROOT_SESSION });
   const completedFirst = update(preparing, completed).model;
   expect(completedFirst.dispatch._tag).toBe("AwaitingSnapshot");
   expect(update(completedFirst, Message.ClickedRefresh()).model).toEqual(completedFirst);

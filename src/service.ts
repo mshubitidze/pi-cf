@@ -10,19 +10,43 @@ import type {
   Submission,
   ModelSettings,
   SettingsRejected,
+  SessionId,
+  WorkspaceState,
+  CreateSession,
+  SessionCreated,
+  UpdateSession,
+  SharedMemory,
+  WorkspaceRejected,
 } from "./model.ts";
 
 /** Personal conversation capability; the host owns persistence and deduplication. */
 export class Conversation extends Context.Service<
   Conversation,
   {
-    readonly read: Effect.Effect<ChatState, ChatUnavailable>;
+    readonly read: (sessionId: SessionId) => Effect.Effect<ChatState, ChatUnavailable>;
     readonly submit: (
       input: Submission,
-    ) => Effect.Effect<Receipt, ChatUnavailable | ConnectionMissing>;
-    readonly result: (id: OperationId) => Effect.Effect<Outcome, ChatUnavailable>;
+      sessionId: SessionId,
+    ) => Effect.Effect<Receipt, ChatUnavailable | ConnectionMissing | WorkspaceRejected>;
+    readonly result: (
+      id: OperationId,
+      sessionId: SessionId,
+    ) => Effect.Effect<Outcome, ChatUnavailable>;
     readonly configure: (
       settings: ModelSettings,
-    ) => Effect.Effect<ChatState, ChatUnavailable | SettingsRejected>;
+      sessionId: SessionId,
+    ) => Effect.Effect<ChatState, ChatUnavailable | SettingsRejected | WorkspaceRejected>;
+    readonly workspace: Effect.Effect<WorkspaceState, ChatUnavailable>;
+    readonly createSession: (
+      input: CreateSession,
+    ) => Effect.Effect<SessionCreated, ChatUnavailable | WorkspaceRejected>;
+    readonly updateSession: (
+      id: SessionId,
+      input: UpdateSession,
+    ) => Effect.Effect<WorkspaceState, ChatUnavailable | WorkspaceRejected>;
+    readonly saveMemory: (
+      input: SharedMemory,
+    ) => Effect.Effect<WorkspaceState, ChatUnavailable | WorkspaceRejected>;
+    readonly stop: (id: SessionId) => Effect.Effect<ChatState, ChatUnavailable | WorkspaceRejected>;
   }
 >()("pi/Conversation") {}

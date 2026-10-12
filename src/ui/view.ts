@@ -1,7 +1,7 @@
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
-import type { Document, HtmlBuilder } from "foldkit/html";
-import { Check, ArrowUp, ChevronDown, Ellipsis, RefreshCw } from "lucide";
+import { createLazy, type Document, type HtmlBuilder } from "foldkit/html";
+import { Check, ArrowUp, ChevronDown, Ellipsis, RefreshCw, Copy, Square } from "lucide";
 import { icon } from "./lib/icons.ts";
 import * as Combobox from "./components/ui/combobox.ts";
 import * as Popover from "./components/ui/popover.ts";
@@ -9,9 +9,11 @@ import { buttonClass } from "./components/ui/button.ts";
 import { button } from "@/components/ui/button";
 import { textarea } from "@/components/ui/textarea";
 import { nativeSelect, nativeSelectOption } from "@/components/ui/native-select";
-import { MAX_PROMPT_LENGTH, type ChatState } from "../model.ts";
+import { MAX_PROMPT_LENGTH, type ChatState, type Submission } from "../model.ts";
 import { Message } from "./message.ts";
 import {
+  selectedSession,
+  canStop,
   canSubmit,
   canRefresh,
   canRetry,
@@ -20,13 +22,20 @@ import {
   selectedModelName,
   type Model,
 } from "./model.ts";
+import { renderMessageMarkdown } from "./markdown.ts";
+import {
+  threadSwitcherView,
+  workspaceActionsView,
+  memoryDialogView,
+  renameDialogView,
+} from "./workspace-view.ts";
 import type { WorkflowView } from "./workflow.ts";
 
 const headerView = (model: Model, h: HtmlBuilder<Message>) =>
   h.header(
     [h.Class("flex h-14 shrink-0 items-center justify-between")],
     [
-      h.h1([h.Class("text-lg font-semibold tracking-tight")], ["Pi"]),
+      threadSwitcherView(model, h),
       h.submodel({
         slotId: "workspace",
         model: model.workspacePopover,
@@ -46,6 +55,7 @@ const headerView = (model: Model, h: HtmlBuilder<Message>) =>
             }),
             contentClass: `w-64 max-w-[calc(100vw-1.5rem)] border border-border bg-card p-3 text-foreground ${Option.isSome(model.workspacePopover.maybeLastButtonPointerType) ? "popover-motion" : ""}`,
             content: [
+              ...workspaceActionsView(model, h),
               h.p(
                 [h.Class("px-2 py-1 text-xs text-muted-foreground")],
                 [
@@ -89,7 +99,11 @@ const emptyConversationView = (h: HtmlBuilder<Message>) =>
       ),
     ],
   );
-const messageView = (message: ChatState["messages"][number], h: HtmlBuilder<Message>) =>
+const messageView = (
+  message: ChatState["messages"][number],
+  maybeCopiedMessage: Option.Option<string>,
+  h: HtmlBuilder<Message>,
+) =>
   h.keyed("article")(
     message.id,
     [h.AriaLabel(message.role === "user" ? "Your message" : "Pi's reply")],
@@ -99,15 +113,60 @@ const messageView = (message: ChatState["messages"][number], h: HtmlBuilder<Mess
           h.Class(
             message.role === "user"
               ? "ml-auto w-fit max-w-[90%] wrap-anywhere whitespace-pre-wrap rounded-2xl bg-muted px-4 py-2.5 text-sm leading-relaxed"
-              : "max-w-full wrap-anywhere whitespace-pre-wrap px-1 text-sm leading-relaxed",
+              : "max-w-full wrap-anywhere px-1 text-sm leading-relaxed",
           ),
         ],
-        [message.text],
+        [message.role === "assistant" ? renderMessageMarkdown(message.text, h) : message.text],
       ),
+      message.role === "assistant" && Option.exists(maybeCopiedMessage, (id) => id === message.id)
+        ? h.span([h.Role("status"), h.AriaLive("polite"), h.Class("sr-only")], ["Reply copied"])
+        : h.empty,
+      message.role === "assistant"
+        ? button(
+            {
+              type: "button",
+              variant: "ghost",
+              className: "min-h-11 px-2 text-xs text-muted-foreground",
+              onClick: Message.ClickedCopyReply({ messageId: message.id, text: message.text }),
+              attributes: [h.AriaLabel("Copy reply")],
+            },
+            [
+              icon(h, Copy, "size-3.5"),
+              Option.exists(maybeCopiedMessage, (id) => id === message.id) ? "Copied" : "Copy",
+            ],
+            h,
+          )
+        : h.empty,
     ],
   );
 // NOTE: Only the viewport reverses; message DOM order remains chronological.
 // Native scroll anchoring follows the end and preserves an older reading position.
+const lazyTranscriptContent = createLazy();
+const transcriptContentView = (
+  messages: ChatState["messages"],
+  maybeSubmission: Option.Option<Submission>,
+  maybeCopiedMessage: Option.Option<string>,
+  h: HtmlBuilder<Message>,
+) =>
+  h.div(
+    [h.Class("flex min-h-full shrink-0 flex-col gap-5 py-4 sm:py-6")],
+    [
+      ...Array.match(messages, {
+        onEmpty: () => (Option.isNone(maybeSubmission) ? [emptyConversationView(h)] : []),
+        onNonEmpty: (messages) =>
+          messages.map((message) => messageView(message, maybeCopiedMessage, h)),
+      }),
+      Option.match(maybeSubmission, {
+        onNone: () => h.empty,
+        onSome: (submission) =>
+          messageView(
+            { id: submission.operationId, role: "user", text: submission.prompt },
+            maybeCopiedMessage,
+            h,
+          ),
+      }),
+    ],
+  );
 const transcriptView = (model: Model, h: HtmlBuilder<Message>) =>
   h.section(
     [
@@ -118,21 +177,12 @@ const transcriptView = (model: Model, h: HtmlBuilder<Message>) =>
       h.Tabindex(0),
     ],
     [
-      h.div(
-        [h.Class("flex min-h-full shrink-0 flex-col gap-5 py-4 sm:py-6")],
-        [
-          ...Array.match(model.workflow.chat.messages, {
-            onEmpty: () =>
-              Option.isNone(model.workflow.maybeSubmission) ? [emptyConversationView(h)] : [],
-            onNonEmpty: (messages) => messages.map((message) => messageView(message, h)),
-          }),
-          Option.match(model.workflow.maybeSubmission, {
-            onNone: () => h.empty,
-            onSome: (submission) =>
-              messageView({ id: submission.operationId, role: "user", text: submission.prompt }, h),
-          }),
-        ],
-      ),
+      lazyTranscriptContent(transcriptContentView, [
+        model.workflow.chat.messages,
+        model.workflow.phase === "submitRejected" ? Option.none() : model.workflow.maybeSubmission,
+        model.maybeCopiedMessage,
+        h,
+      ]),
     ],
   );
 const statusText = (phase: WorkflowView["phase"]) =>
@@ -142,10 +192,15 @@ const statusText = (phase: WorkflowView["phase"]) =>
     submitting: "Sending…",
     waiting: "Pi is working…",
     loadFailed: "Connection interrupted",
+    submitRejected: "This message was not accepted",
     submitFailed: "Message delivery uncertain",
     waitFailed: "Reconnecting is safe; your task may still be running.",
     configuring: "Saving settings…",
     settingsFailed: "Refresh to confirm your settings",
+    reconciling: "Checking the saved conversation…",
+    reconcileFailed: "Could not confirm the saved conversation",
+    stopping: "Stopping…",
+    stopFailed: "Refresh to confirm the task stopped",
   })[phase];
 const workflowStatusView = (model: Model, h: HtmlBuilder<Message>) =>
   h.div(
@@ -162,7 +217,7 @@ const workflowStatusView = (model: Model, h: HtmlBuilder<Message>) =>
           model.workflow.phase === "ready"
             ? h.empty
             : h.span([h.Class("py-2")], [statusText(model.workflow.phase)]),
-          model.workflow.phase === "settingsFailed"
+          ["settingsFailed", "stopFailed", "reconcileFailed"].includes(model.workflow.phase)
             ? button(
                 {
                   onClick: Message.ClickedRefresh(),
@@ -189,7 +244,10 @@ const workflowStatusView = (model: Model, h: HtmlBuilder<Message>) =>
         ],
       ),
       Option.match(
-        Option.orElse(model.maybeFeedback, () => model.workflow.maybeError),
+        Option.orElse(
+          Option.orElse(model.maybeFeedback, () => model.workflow.maybeError),
+          () => model.maybeWorkspaceError,
+        ),
         {
           onNone: () => h.empty,
           onSome: (error) =>
@@ -204,6 +262,18 @@ const workflowStatusView = (model: Model, h: HtmlBuilder<Message>) =>
             ),
         },
       ),
+      model.workspaceActivity === "createFailed"
+        ? button(
+            {
+              type: "button",
+              variant: "outline",
+              className: "mb-2 min-h-11",
+              onClick: Message.ClickedRetryCreateThread(),
+            },
+            "Retry creating thread",
+            h,
+          )
+        : h.empty,
       model.workflow.phase === "ready" && model.workflow.chat.connection === "missing"
         ? h.p(
             [h.Class("mb-2 text-sm text-muted-foreground")],
@@ -399,19 +469,32 @@ const composerView = (model: Model, h: HtmlBuilder<Message>) =>
                     ],
                   )
                 : h.empty,
-              button(
-                {
-                  type: "submit",
-                  isDisabled: !canSubmit(model),
-                  className: "size-11 rounded-xl",
-                  attributes: [
-                    h.AriaLabel("Send message"),
-                    h.Title("Send message (⌘/Ctrl + Enter)"),
-                  ],
-                },
-                icon(h, ArrowUp, "size-5"),
-                h,
-              ),
+              canStop(model) || model.workflow.phase === "stopping"
+                ? button(
+                    {
+                      type: "button",
+                      variant: "outline",
+                      className: "min-h-11 rounded-xl px-3",
+                      isDisabled: !canStop(model),
+                      onClick: Message.ClickedStop(),
+                      attributes: [h.AriaLabel("Stop response")],
+                    },
+                    [icon(h, Square, "size-4"), "Stop"],
+                    h,
+                  )
+                : button(
+                    {
+                      type: "submit",
+                      isDisabled: !canSubmit(model),
+                      className: "size-11 rounded-xl",
+                      attributes: [
+                        h.AriaLabel("Send message"),
+                        h.Title("Send message (⌘/Ctrl + Enter)"),
+                      ],
+                    },
+                    icon(h, ArrowUp, "size-5"),
+                    h,
+                  ),
             ],
           ),
         ],
@@ -428,7 +511,28 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
       headerView(model, h),
       transcriptView(model, h),
       workflowStatusView(model, h),
+      selectedSession(model)?.archived
+        ? h.div(
+            [h.Class("flex items-center justify-between gap-2 py-2 text-sm text-muted-foreground")],
+            [
+              h.span([], ["This thread is archived."]),
+              button(
+                {
+                  type: "button",
+                  variant: "outline",
+                  className: "min-h-11",
+                  isDisabled: model.workspaceActivity !== "idle",
+                  onClick: Message.ClickedArchiveThread({ sessionId: model.workflow.sessionId }),
+                },
+                "Restore thread",
+                h,
+              ),
+            ],
+          )
+        : h.empty,
       composerView(model, h),
+      memoryDialogView(model, h),
+      renameDialogView(model, h),
     ],
   ),
 });

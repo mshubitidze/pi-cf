@@ -25,7 +25,14 @@ import {
   update,
   view,
 } from "./main.ts";
-import { MAX_PROMPT_LENGTH, ModelSettings, ChatState, OperationId, Submission } from "../model.ts";
+import {
+  MAX_PROMPT_LENGTH,
+  ModelSettings,
+  ChatState,
+  OperationId,
+  ROOT_SESSION,
+  Submission,
+} from "../model.ts";
 import { WorkflowView } from "./workflow.ts";
 
 test("a connected user can compose a message and sees preparation errors accessibly", () => {
@@ -36,6 +43,7 @@ test("a connected user can compose a message and sees preparation errors accessi
     Subscription.emit(
       Message.UpdatedWorkflow({
         workflow: WorkflowView.make({
+          sessionId: ROOT_SESSION,
           phase: "ready",
           maybeError: Option.none(),
           maybeSubmission: Option.none(),
@@ -67,6 +75,7 @@ test("missing login keeps sending disabled and explains how to connect", () => {
     Subscription.emit(
       Message.UpdatedWorkflow({
         workflow: WorkflowView.make({
+          sessionId: ROOT_SESSION,
           phase: "ready",
           chat: ChatState.make({
             messages: [],
@@ -102,6 +111,7 @@ test("history remains visible while waiting and reconnect errors offer Retry", (
     models: [],
   });
   const waiting = WorkflowView.make({
+    sessionId: ROOT_SESSION,
     phase: "waiting",
     chat,
     maybeError: Option.none(),
@@ -115,7 +125,7 @@ test("history remains visible while waiting and reconnect errors offer Retry", (
     expect(role("heading", { name: "Pi", level: 1 })).toBeVisible(),
     expect(text("Saved reply")).toBeVisible(),
     expect(text("Pi is working…")).toBeVisible(),
-    expect(role("button", { name: "Send message" })).toBeDisabled(),
+    expect(role("button", { name: "Stop response" })).toBeEnabled(),
     Subscription.emit(
       Message.UpdatedWorkflow({
         workflow: WorkflowView.make({
@@ -137,6 +147,7 @@ test("accepted submission clears the draft and uncertain delivery preserves its 
   const requestId = OperationId.make("scene-submission-123");
   const retryId = OperationId.make("scene-retry-123");
   const ready = WorkflowView.make({
+    sessionId: ROOT_SESSION,
     phase: "ready",
     chat: ChatState.make({
       messages: [],
@@ -162,7 +173,10 @@ test("accepted submission clears the draft and uncertain delivery preserves its 
     Subscription.emit(Message.UpdatedWorkflow({ workflow: ready })),
     type(label("Message Pi"), "Hello Pi"),
     submit(role("form")),
-    Command.resolve(SubmitPrompt, Message.CompletedSubmitPrompt({ requestId })),
+    Command.resolve(
+      SubmitPrompt,
+      Message.CompletedSubmitPrompt({ requestId, sessionId: ROOT_SESSION }),
+    ),
     Subscription.emit(Message.UpdatedWorkflow({ workflow: submitting })),
     expect(label("Message Pi")).toHaveValue(""),
     expect(text("Sending…")).toBeVisible(),

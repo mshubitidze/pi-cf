@@ -47,6 +47,54 @@ it("validates settings over HTTP and returns the durable selection through RPC",
   });
 });
 
+it("serves isolated threads and revision-checked memory through the authorized HTTP boundary", async () => {
+  const post = (path: string, body: unknown, origin = "http://localhost") =>
+    exports.default.fetch(`http://localhost${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify(body),
+    });
+  const creation = { operationId: "http-workspace-create", title: "HTTP verification" };
+  expect((await post("/api/sessions", creation, "https://foreign.invalid")).status).toBe(403);
+  const createdResponse = await post("/api/sessions", creation);
+  expect(createdResponse.status).toBe(201);
+  const created = await createdResponse.json<{
+    sessionId: string;
+    workspace: { sessions: { id: string }[] };
+  }>();
+  expect(created.workspace.sessions.some((session) => session.id === "1")).toBe(true);
+  const duplicate = await (await post("/api/sessions", creation)).json<{ sessionId: string }>();
+  expect(duplicate.sessionId).toBe(created.sessionId);
+  const chat = await exports.default.fetch(
+    `http://localhost/api/chat?session=${created.sessionId}`,
+  );
+  expect(chat.status).toBe(200);
+  expect(await chat.json()).toMatchObject({ messages: [], connection: "missing" });
+  const saved = await post("/api/memory", { text: "Prefer concise answers.", revision: 0 });
+  expect(saved.status).toBe(200);
+  expect(await saved.json()).toMatchObject({
+    memory: { text: "Prefer concise answers.", revision: 1 },
+  });
+  const stale = await post("/api/memory", { text: "Outdated edit", revision: 0 });
+  expect(stale.status).toBe(409);
+  expect(await stale.json()).toMatchObject({ reason: "conflict" });
+  expect(
+    (await post(`/api/sessions/${created.sessionId}`, { title: "Renamed", archived: true })).status,
+  ).toBe(200);
+  expect(
+    (
+      await post(`/api/chat?session=${created.sessionId}`, {
+        operationId: "archived-http-submit",
+        prompt: "Hello",
+      })
+    ).status,
+  ).toBe(409);
+  expect((await post("/api/sessions/999999/stop", {})).status).toBe(404);
+  expect((await exports.default.fetch("http://localhost/api/chat?session=invalid")).status).toBe(
+    400,
+  );
+});
+
 it("permits the explicit loopback bypass and protects write origins and body boundaries", async () => {
   expect((await exports.default.fetch("http://localhost/api/health")).status).toBe(200);
   expect(await (await exports.default.fetch("http://localhost/")).text()).toBe("test asset");
