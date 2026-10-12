@@ -1,0 +1,66 @@
+{
+  "name": "pi-cf",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev --env-file .dev.vars",
+    "deploy": "alchemy deploy",
+    "build": "vite build && bun scripts/build-worker.mjs",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test/runtime/tsconfig.json",
+    "lint": "oxlint src scripts test *.ts",
+    "format": "oxfmt src scripts test docs *.ts *.json *.toml *.md",
+    "format:check": "oxfmt --check src scripts test docs *.ts *.json *.toml *.md",
+    "test": "bun test ./src",
+    "prepare": "effect-tsgo patch",
+    "login:chatgpt": "bun scripts/login-chatgpt.mjs",
+    "test:runtime": "vitest run --config vitest.runtime.config.ts"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-durable": "1.1.0",
+    "@effect/platform-browser": "4.0.0",
+    "@effect/platform-bun": "4.0.0",
+    "@foldkit/ui": "0.168.0",
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@xstate/effect": "0.1.0-alpha.7",
+    "agents": "0.28.0",
+    "alchemy": "2.0.0-beta.81",
+    "cn": "0.4.0",
+    "effect": "4.0.0",
+    "foldkit": "0.168.0",
+    "jose": "6.2.12",
+    "lucide": "1.55.0",
+    "tailwindcss": "4.3.3",
+    "xstate": "6.0.0-alpha.65"
+  },
+  "devDependencies": {
+    "@alchemy.run/cloudflare-runtime": "2.0.0-beta.81",
+    "@cloudflare/vitest-plugin": "1.4.0",
+    "@cloudflare/workers-types": "5.20261012.1",
+    "@effect/tsgo": "0.51.1",
+    "@foldkit/devtools-mcp": "0.24.1",
+    "@foldkit/oxlint-plugin": "0.15.3",
+    "@foldkit/vite-plugin": "0.27.1",
+    "@mpsuesser/oxlint-plugin-effect": "0.6.0",
+    "@msw/cloudflare": "0.2.0",
+    "@types/bun": "1.4.2",
+    "msw": "3.0.3",
+    "oxfmt": "0.71.0",
+    "oxlint": "1.86.0",
+    "rolldown": "1.2.5",
+    "shadcn": "4.21.4",
+    "typescript": "7.0.2",
+    "vite": "8.3.4",
+    "vitest": "5.0.4"
+  },
+  "overrides": {
+    "workerd": "1.20261006.1"
+  },
+  "patchedDependencies": {
+    "@foldkit/vite-plugin@0.27.1": "patches/@foldkit%2Fvite-plugin@0.27.1.patch",
+    "@foldkit/devtools-mcp@0.24.1": "patches/@foldkit%2Fdevtools-mcp@0.24.1.patch"
+  }
+}

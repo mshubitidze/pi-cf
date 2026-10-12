@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "foldkit-devtools": {
+      "command": "bun",
+      "args": ["run", "--bun", "foldkit-devtools-mcp"],
+      "env": { "FOLDKIT_DEVTOOLS_RELAY_DIRECTORY": ".local/foldkit-relays" }
+    },
+    "shadcn": {
+      "command": "bun",
+      "args": ["run", "--bun", "shadcn", "mcp"]
+    }
+  }
+}

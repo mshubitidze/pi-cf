@@ -1,0 +1,8 @@
+[mcp_servers.foldkit-devtools]
+command = "bun"
+args = ["run", "--bun", "foldkit-devtools-mcp"]
+env = { FOLDKIT_DEVTOOLS_RELAY_DIRECTORY = ".local/foldkit-relays" }
+
+[mcp_servers.shadcn]
+command = "bun"
+args = ["run", "--bun", "shadcn", "mcp"]
